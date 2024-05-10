@@ -1,0 +1,64 @@
+permissions:
+  contents: read
+on:
+  push:
+    branches:
+      - main
+  #  pull_request:
+  workflow_dispatch:
+
+# If new code is pushed to a PR branch, then cancel in progress workflows for that PR.
+# Ensures that we don't waste CI time, and returns results quicker
+# https://github.com/jonhoo/rust-ci-conf/pull/5
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+name: Deploy rapid fs
+jobs:
+  required:
+    #Don't change noble without changing the Dockerfile
+    runs-on: ubuntu-22.04
+    name: ubuntu / ${{ matrix.toolchain }}
+    strategy:
+      matrix:
+        # run on stable and beta to ensure that tests won't break on the next version of the rust
+        # toolchain
+        #, beta
+        toolchain: [stable]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+          token: ${{ secrets.CROSS_REPO_TOKEN }}
+      #Configure git to auth with the cross repo PAT
+      - run: git config --global url."https://${{ secrets.CROSS_REPO_TOKEN }}@github.com".insteadOf ssh://git@github.com
+      #      - run: git config --global url."https://${{ secrets.CROSS_REPO_TOKEN }}@github.com".insteadOf https://github.com
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install ${{ matrix.toolchain }}
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.toolchain }}
+
+      - name: cargo generate-lockfile
+        # enable this ci template to run regardless of whether the lockfile is checked in or not
+        if: hashFiles('Cargo.lock') == ''
+        run: cargo generate-lockfile
+
+        #      # https://twitter.com/jonhoo/status/1571290371124260865
+        #      - name: cargo test --locked
+        #        run: cargo test --locked --all-features --all-targets
+        #
+        #      # https://github.com/rust-lang/cargo/issues/6669
+        #      - name: cargo test --doc
+        #        run: cargo test --locked --all-features --doc
+
+        #https://doc.rust-lang.org/cargo/reference/publishing.html#publishing-on-cratesio
+        #PWD=../.. to set the dir back to the root. build.rs assumes root dir
+        #--allow-dirty because we copy the proto dir from root
+        # --dry-run to test changes before publishing to cargo
+      - name: deploy
+        run: |
+          CARGO_REGISTRY_TOKEN=${{ secrets.RUST_CRATES_TOKEN }} cargo publish --allow-dirty

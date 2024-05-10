@@ -1,0 +1,8 @@
+<?xml version="1.0"?>
+<document>
+    <db label="db1" type="mekadb" db_name="abc123" username="user1" password="pass1" host="mekadb.hypi.app" port="2024"/>
+    <apis>
+        <pipeline import="pipeline_register.xml"/>
+        </rest>
+    </apis>
+</document>

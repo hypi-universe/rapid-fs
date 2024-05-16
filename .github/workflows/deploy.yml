@@ -28,12 +28,6 @@ jobs:
         toolchain: [stable]
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: true
-          token: ${{ secrets.CROSS_REPO_TOKEN }}
-      #Configure git to auth with the cross repo PAT
-      - run: git config --global url."https://${{ secrets.CROSS_REPO_TOKEN }}@github.com".insteadOf ssh://git@github.com
-      #      - run: git config --global url."https://${{ secrets.CROSS_REPO_TOKEN }}@github.com".insteadOf https://github.com
 
       - uses: Swatinem/rust-cache@v2
 
@@ -60,5 +54,6 @@ jobs:
         #--allow-dirty because we copy the proto dir from root
         # --dry-run to test changes before publishing to cargo
       - name: deploy
-        run: |
-          CARGO_REGISTRY_TOKEN=${{ secrets.RUST_CRATES_TOKEN }} cargo publish --allow-dirty
+        run: cargo publish --allow-dirty
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.RUST_CRATES_TOKEN }}

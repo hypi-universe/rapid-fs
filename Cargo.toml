@@ -1,6 +1,6 @@
 [package]
 name = "rapid-fs"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 license-file = "LICENSE.md"
 description = "A simple virtual file system API for Hypi's RAPID server"

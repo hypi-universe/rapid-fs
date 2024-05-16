@@ -11,14 +11,16 @@ use log::warn;
 use serde::Deserialize;
 use thiserror::Error;
 
-const DOMAINS_SUBDIR: &str = "domains";
-const RESOURCES_SUBDIR: &str = "files";
+pub const DOMAINS_SUBDIR: &str = "domains";
+pub const RESOURCES_SUBDIR: &str = "files";
 pub const TMP_SUBDIR: &str = ".tmp";
-const VERSIONS_SUBDIR: &str = "versions";
-const ECMA_SUBDIR: &str = "ecma";
-const PLUGINS_SUBDIR: &str = "plugins";
+pub const VERSIONS_SUBDIR: &str = "versions";
+pub const DRAFTS_SUBDIR: &str = "drafts";
+pub const ECMA_SUBDIR: &str = "ecma";
+pub const PLUGINS_SUBDIR: &str = "plugins";
 
 pub type Result<T> = std::result::Result<T, VfsErr>;
+
 #[derive(Debug, Error)]
 pub enum VfsErr {
     #[error("Domain not found - {0}")]
@@ -45,6 +47,7 @@ pub enum VfsErr {
 pub struct DomainOptions {
     pub service_id: i64,
     pub version: String,
+    pub is_draft: bool,
 }
 
 ///[Vfs] i.e. virtual file system is specifically designed to constrain access to the file system via API requests
@@ -121,16 +124,16 @@ pub trait Vfs: Sync + Send {
         path.push(name);
         Ok(path)
     }
-    fn schema_file(&self, service_id: i64, version: &str, file: &str) -> Result<PathBuf> {
-        self.resolve(format!("{}/{}/{}/{}", service_id, VERSIONS_SUBDIR, version, file).as_str())
+    fn schema_file(&self, service_id: i64, is_draft: bool, version: &str, file: &str) -> Result<PathBuf> {
+        self.resolve(format!("{}/{}/{}/{}", service_id, if is_draft { DRAFTS_SUBDIR } else { VERSIONS_SUBDIR }, version, file).as_str())
     }
-    fn ecma_dir(&self, service_id: i64, version: &str) -> Result<PathBuf> {
+    fn ecma_dir(&self, service_id: i64, is_draft: bool, version: &str) -> Result<PathBuf> {
         self.resolve(
             format!(
                 "{}/{}/{}/{}",
-                service_id, VERSIONS_SUBDIR, version, ECMA_SUBDIR
+                service_id, if is_draft { DRAFTS_SUBDIR } else { VERSIONS_SUBDIR }, version, ECMA_SUBDIR
             )
-            .as_str(),
+                .as_str(),
         )
     }
     fn read(&self, file: PathBuf) -> Result<Box<dyn Read + '_>>;
@@ -158,8 +161,8 @@ pub trait Vfs: Sync + Send {
             Err(e) => Err(e),
         }
     }
-    fn read_schema_file(&self, service_id: i64, version: &str, filename: &str) -> Result<String> {
-        match self.schema_file(service_id, version, filename) {
+    fn read_schema_file(&self, service_id: i64, is_draft: bool, version: &str, filename: &str) -> Result<String> {
+        match self.schema_file(service_id, is_draft, version, filename) {
             Ok(file) => {
                 let mut data = vec![];
                 let mut input = self.read(file)?;
@@ -175,8 +178,8 @@ pub trait Vfs: Sync + Send {
             Err(e) => Err(e),
         }
     }
-    fn read_ecma<'a>(&'a self, service_id: i64, version: &str) -> Result<DirStream<'a, Self>> {
-        let dir = self.ecma_dir(service_id, version)?;
+    fn read_ecma<'a>(&'a self, service_id: i64, is_draft: bool, version: &str) -> Result<DirStream<'a, Self>> {
+        let dir = self.ecma_dir(service_id, is_draft, version)?;
         self.dir_stream(dir)
     }
     fn dir_stream<'a>(&'a self, dir: PathBuf) -> Result<DirStream<'a, Self>> {
@@ -202,8 +205,9 @@ pub trait Vfs: Sync + Send {
     }
     fn read_dir(&self, dir: &PathBuf) -> Result<VirtualReadDir>;
 }
+
 pub struct VirtualReadDir {
-    inner: Box<dyn Iterator<Item = PathBuf>>,
+    inner: Box<dyn Iterator<Item=PathBuf>>,
 }
 
 impl Iterator for VirtualReadDir {
@@ -213,9 +217,10 @@ impl Iterator for VirtualReadDir {
         self.inner.next()
     }
 }
+
 pub struct DirStream<'a, F>
-where
-    F: Vfs + ?Sized,
+    where
+        F: Vfs + ?Sized,
 {
     base: PathBuf,
     buf: VecDeque<VirtualReadDir>,
@@ -272,12 +277,14 @@ impl<'a, F: Vfs> Iterator for DirStream<'a, F> {
         }
     }
 }
+
 #[derive(Clone)]
 pub struct FilesystemVfs {
     ///The absolute path to the directory where the services are kept
     ///This is important because we ensure that all operations are a sub-directory of this
     services_dir: PathBuf,
 }
+
 pub trait VfsFile: Read + Write + Seek {
     fn path(&self) -> PathBuf;
     fn clone(&self) -> Result<Box<dyn VfsFile>>;
@@ -285,23 +292,25 @@ pub trait VfsFile: Read + Write + Seek {
 
 impl dyn VfsFile {
     pub fn save_to<F>(&self, fs: Arc<BoundVfs<F>>, new_name: Option<String>) -> Result<String>
-    where
-        F: Vfs,
+        where
+            F: Vfs,
     {
         fs.save_to(self, new_name)
     }
     pub fn discard<F>(&self, fs: Arc<BoundVfs<F>>) -> Result<()>
-    where
-        F: Vfs,
+        where
+            F: Vfs,
     {
         fs.discard(self)
     }
 }
+
 impl Debug for dyn VfsFile {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.write_str("VfsFile")
     }
 }
+
 pub struct VfsFileSystemFile(File, PathBuf);
 
 impl VfsFile for VfsFileSystemFile {
@@ -317,6 +326,7 @@ impl VfsFile for VfsFileSystemFile {
         )))
     }
 }
+
 impl Read for VfsFileSystemFile {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         self.0.read(buf)
@@ -373,7 +383,7 @@ impl Vfs for FilesystemVfs {
         }
         let it = fs::read_dir(dir).map_err(VfsErr::Io)?;
         let it = it.map(|v| v.map(|e| e.path())).flatten();
-        let it: Box<dyn Iterator<Item = PathBuf>> = Box::new(it);
+        let it: Box<dyn Iterator<Item=PathBuf>> = Box::new(it);
         Ok(VirtualReadDir { inner: it })
     }
 }
@@ -438,6 +448,7 @@ impl Write for MemVfsFile {
         Ok(())
     }
 }
+
 impl VfsFile for MemVfsFile {
     fn path(&self) -> PathBuf {
         self.path.clone()
@@ -532,28 +543,28 @@ impl Vfs for MemoryVfs {
 }
 
 pub struct BoundVfs<F>
-where
-    F: Vfs,
+    where
+        F: Vfs,
 {
     pub options: DomainOptions,
     pub vfs: Arc<F>,
 }
 
 impl<F> BoundVfs<F>
-where
-    F: Vfs,
+    where
+        F: Vfs,
 {
     pub fn new(options: DomainOptions, vfs: Arc<F>) -> BoundVfs<F> {
         Self { options, vfs }
     }
     pub fn read_schema_file(&self, name: &str) -> Result<String> {
         self.vfs
-            .read_schema_file(self.options.service_id, self.options.version.as_str(), name)
+            .read_schema_file(self.options.service_id, self.options.is_draft, self.options.version.as_str(), name)
     }
 
     pub fn ecma_files(&self) -> Result<DirStream<F>> {
         self.vfs
-            .read_ecma(self.options.service_id, self.options.version.as_str())
+            .read_ecma(self.options.service_id, self.options.is_draft, self.options.version.as_str())
     }
 
     pub fn read_ecma_file(&self, mut file: PathBuf) -> Result<String> {
@@ -565,7 +576,7 @@ where
         }
         let mut path = self
             .vfs
-            .ecma_dir(self.options.service_id, self.options.version.as_str())?;
+            .ecma_dir(self.options.service_id, self.options.is_draft, self.options.version.as_str())?;
         path.push(file);
         let mut read = self.vfs.read(path)?;
         let mut str = String::new();
@@ -625,15 +636,15 @@ where
     }
 
     pub fn discard<I>(&self, _file: &I) -> Result<()>
-    where
-        I: VfsFile + ?Sized,
+        where
+            I: VfsFile + ?Sized,
     {
         todo!();
         // Ok(())
     }
     pub fn save_to<I>(&self, file: &I, new_name: Option<String>) -> Result<String>
-    where
-        I: VfsFile + ?Sized,
+        where
+            I: VfsFile + ?Sized,
     {
         let mut other_path = file.path();
         let mut path = self.vfs.resource_dir(self.options.service_id)?;
